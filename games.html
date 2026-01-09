@@ -1,0 +1,203 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ventral String · Games</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="top-bar">
+        <button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-controls="sidebar" aria-label="Toggle navigation">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <span class="brand">Ventral String</span>
+        <div class="status-indicator">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-text">v4.0.0</span>
+        </div>
+    </header>
+
+    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+        <nav class="sidebar__content">
+            <h2>Navigation</h2>
+            <ul>
+                <li><a href="index.html">Home</a></li>
+                <li><a href="games.html">Games</a></li>
+                <li><a href="apps.html">Apps</a></li>
+                <li><a href="media.html">Media</a></li>
+                <li><a href="settings.html">Settings</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main class="welcome page-layout">
+        <div class="page-content">
+            <h1 class="page-title">Games</h1>
+            <form class="page-search" role="search" data-search-form>
+                <label class="sr-only" for="games-search">Search this page</label>
+                <input id="games-search" type="search" name="q" placeholder="Search this page!" autocomplete="off" data-search-input>
+                <span class="page-search__divider" aria-hidden="true"></span>
+                <button type="submit" class="page-search__button" aria-label="Submit search">
+                    <span class="page-search__icon" aria-hidden="true"></span>
+                </button>
+            </form>
+            <div class="game-meta" data-game-meta>
+                <p class="game-count" data-game-count>Loading games…</p>
+            </div>
+            <div class="game-shelf" data-game-grid></div>
+        </div>
+    </main>
+
+    <script src="time.js"></script>
+    <script>
+        (function () {
+            const searchForm = document.querySelector('[data-search-form]');
+            const searchInput = document.querySelector('[data-search-input]');
+            const grid = document.querySelector('[data-game-grid]');
+            const meta = document.querySelector('[data-game-meta]');
+            const countEl = document.querySelector('[data-game-count]');
+
+            const chunkSize = 24;
+            const chunkDelay = 40;
+            const tiles = [];
+            let manifest = [];
+
+            if (searchInput) {
+                searchInput.disabled = true;
+                searchInput.placeholder = 'Loading games…';
+            }
+
+            searchForm?.addEventListener('submit', (event) => event.preventDefault());
+
+            function formatCount(total, matches, hasQuery) {
+                if (hasQuery) {
+                    return `Showing ${matches.toLocaleString()} of ${total.toLocaleString()} games`;
+                }
+                return `${total.toLocaleString()} ${total === 1 ? 'game' : 'games'} available`;
+            }
+
+            function applyFilter(query) {
+                const normalized = query.trim().toLowerCase();
+                let visible = 0;
+
+                tiles.forEach((tile) => {
+                    const title = tile.dataset.gameTitle;
+                    const matches = !normalized || title.includes(normalized);
+
+                    if (matches) {
+                        if (tile._hideTimeout) {
+                            clearTimeout(tile._hideTimeout);
+                            tile._hideTimeout = null;
+                        }
+                        tile.classList.remove('game-tile--hidden', 'is-hidden');
+                        tile.removeAttribute('hidden');
+                        visible += 1;
+                    } else if (!tile.classList.contains('game-tile--hidden')) {
+                        tile.classList.add('game-tile--hidden');
+                        tile._hideTimeout = setTimeout(() => {
+                            tile.setAttribute('hidden', '');
+                            tile.classList.add('is-hidden');
+                            tile._hideTimeout = null;
+                        }, 220);
+                    }
+                });
+
+                const totalGames = manifest.length;
+                const hasQuery = Boolean(normalized);
+                countEl.textContent = formatCount(totalGames, visible, hasQuery);
+                grid.classList.toggle('game-shelf--filtering', hasQuery);
+                grid.classList.toggle('game-shelf--empty', visible === 0);
+                meta.classList.toggle('game-meta--filtered', hasQuery);
+            }
+
+            async function loadManifest() {
+                try {
+                    const response = await fetch('games_manifest.json', { cache: 'no-store' });
+                    if (!response.ok) {
+                        throw new Error(`Manifest request failed with ${response.status}`);
+                    }
+                    const data = await response.json();
+                    manifest = Array.isArray(data) ? data : [];
+                    countEl.textContent = formatCount(manifest.length, manifest.length, false);
+                    if (searchInput) {
+                        searchInput.disabled = false;
+                        searchInput.placeholder = 'Search this page!';
+                    }
+                    renderChunks();
+                } catch (error) {
+                    console.error('Unable to load games manifest:', error);
+                    countEl.textContent = 'Unable to load games';
+                    if (searchInput) {
+                        searchInput.disabled = true;
+                        searchInput.placeholder = 'Search unavailable';
+                    }
+                }
+            }
+
+            function createTile(game) {
+                const tile = document.createElement('a');
+                tile.className = 'game-tile game-tile--incoming';
+                tile.href = game.href;
+                tile.title = game.title;
+                tile.dataset.gameTitle = (game.title || '').toLowerCase();
+
+                const image = document.createElement('img');
+                image.src = game.icon;
+                image.alt = `${game.title} cover art`;
+                image.loading = 'lazy';
+                tile.appendChild(image);
+
+                const label = document.createElement('span');
+                label.className = 'game-tile__label';
+                label.textContent = game.title;
+                tile.appendChild(label);
+
+                requestAnimationFrame(() => tile.classList.remove('game-tile--incoming'));
+                return tile;
+            }
+
+            function renderChunks() {
+                let index = 0;
+                const schedule = window.requestIdleCallback
+                    ? (cb) => window.requestIdleCallback(cb, { timeout: 120 })
+                    : (cb) => setTimeout(cb, chunkDelay);
+
+                function renderNext() {
+                    const slice = manifest.slice(index, index + chunkSize);
+                    if (slice.length === 0) {
+                        applyFilter(searchInput.value);
+                        return;
+                    }
+
+                    const fragment = document.createDocumentFragment();
+                    slice.forEach((game) => {
+                        const tile = createTile(game);
+                        tiles.push(tile);
+                        fragment.appendChild(tile);
+                    });
+
+                    grid.appendChild(fragment);
+                    if (searchInput.value.trim()) {
+                        applyFilter(searchInput.value);
+                    }
+                    index += slice.length;
+                    schedule(renderNext);
+                }
+
+                renderNext();
+            }
+
+            searchInput?.addEventListener('input', () => {
+                applyFilter(searchInput.value);
+            });
+
+            loadManifest();
+        })();
+    </script>
+</body>
+</html>
